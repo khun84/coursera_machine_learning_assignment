@@ -11,11 +11,14 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(cache = T)
+knitr::opts_chunk$set(cache = F)
 ```
 
+## Summary
+In this assignment, we are tasked to produce prediction on weight lifting motion based on body motion data captured from experiment participants. The prediction model that was used in this exercise is **Random Forest**. We will learn from **51 predictors** to produce a model that would correctly **5 of the class labels**. The validation error of the model is far less than 1%.
+
 ## Introduction
-In this project, we will using data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Our objective is to use these data to predict the actions that they are performing.
+We will using data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Our objective is to use these data to predict the actions that they are performing.
 
 The training data for this project are available [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
 
@@ -33,7 +36,7 @@ More information of the data is available from the website [here](http://groupwa
 2. The packages in the below code chunk are required to produce this prediction model.
 
 ```{r 'load library', include=TRUE}
-require(data.table);require(dplyr);require(caret);require(gbm);require(ggplot2);require(corrplot);require(knitr);require(rmarkdown);require(randomForest)
+require(data.table);require(dplyr);require(caret);require(ggplot2);require(corrplot);require(knitr);require(rmarkdown);require(randomForest)
 ```
 
 
@@ -47,15 +50,16 @@ After some preliminary study on the variables, we notice that there are some var
 # load the training set into data table
 dataset <- fread('pml-training.csv', sep= ',', row)
 testingQuiz <- fread('pml-testing.csv', sep=',')
+datasetDim <- dim(dataset)
 
 print('The dimension of training set:')
-dim(dataset)
+datasetDim
 
 # remove variable V1 as its just the row number
 dataset[, V1:=NULL]
 
 # remove the statistics variables as there are derived from other variables within a specific time window
-pattern = '(avg|var|kurtosis|skew|max|min|amplitude)'
+pattern = '(avg|var|kurtosis|skew|max|min|amplitude|std)'
 statVar <- grep(pattern, colnames(dataset),ignore.case = T, value = T)
 dataset[, (statVar):=NULL]
 
@@ -66,7 +70,6 @@ dataset[, (timeVar):=NULL]
 
 # change the target label to factor variable
 dataset[, classe:=factor(classe)]
-
 
 # print out the selected variable and its corresponding class
 str(dataset)
@@ -86,29 +89,67 @@ kable(targetTable, caption = 'Proportion of Label Class in Training Set')
 
 After removing those unnecessary variables, the retained variables are all related to human motion in different axis. From the correlation plot above, we observe that some of these body motion variables do exhibit significant correlation on each other. As multi-colinearity is not a big issue to the model that we will use, we shall not investigate further.
 
+Besides that, the **distribution of each class** in the dataset are quite **balance**, hence we do not have to worry about imbalance class issue.
+
 ## Model Building
 
 ### Data Splitting
 
 We are ready to build the prediction model with dataset that we have cleaned **(52 predictors + 1 target label)**. The dataset will be splitted into **training sets and validation sets** with the proportion of **60% and 40%**. Note that the training set will be further partitioned into training and validation during parameter tuning which is transparent to us.
 
-```{r 'model building', eval=F}
+
+```{r 'data splitting'}
 # split the data into training and validation set
 set.seed(123)
 intrain <- createDataPartition(dataset$classe, p = .6, list = F)
 training <- dataset[intrain,]
 validation <- dataset[-intrain,]
+```
 
+### Model Building
+
+We shall use random forest to build the prediction model. We leave the most of the parameters as default except that the **ntree parameter is set to be 50**. This means that only 50 trees will be developed in the model.
+
+The training error seems to be low but we will use the validation set as our reference on prediction error.
+
+```{r 'model building'}
 # set up the train control and build the model
 set.seed(124)
-trcontrol <- trainControl(method = 'cv', number = '5')
-fit.rf <- train(x = dplyr::select(training, -user_name, -classe), y = training$classe, method = 'rf', trControl = trcontrol, importance = T, na.action = na.pass)
+fit.rf <- randomForest(x = select(training, -user_name, -classe), y = training$classe, ntree = 50, na.action = na.pass, importance = T)
 
+print('Summary of the fitted model:')
+fit.rf
+
+# plot the variable importance
+fitImp <- fit.rf$importance
+
+fitImp <- data.table(variable = factor(rownames(fitImp)), MeanDecreaseAccuracy = fitImp[, 'MeanDecreaseAccuracy'])
+fitImp[, variable:=reorder(variable, MeanDecreaseAccuracy)]
+
+ggplot(fitImp) +  geom_point(aes(x = MeanDecreaseAccuracy, y = variable))+ geom_hline(aes(yintercept = as.numeric(variable)), linetype = 2, color = 'grey')  + theme_bw() + labs(title = 'Variable Importance')
+```
+
+### Model Validation
+
+From the confusion matrix below, the prediction model seems to be working well and able to classify the label correctly with the error of less than 1%.
+
+```{r 'model evaluation'}
 # generate prediction on validation set and its confusion matrix
 pred.validation <- predict(fit.rf, validation, na.action = na.pass)
 
 confusionMatrix(pred.validation, validation$classe)
 ```
 
+## Generate Prediction on Testing Set
+
+We will now generate the prediction for the testing set. Note that the testing test does not contain the true classe label. The performance of this prediction will be evaluated as part of the quiz.
+
+```{r 'prediction for testing set'}
+colname <- c(colnames(dplyr::select(training, -classe)), 'problem_id')
+testing <- testingQuiz[, .SD, .SDcols = colname]
+pred.testing <- predict(fit.rf, testing, na.action = na.pass)
+testing[, predicted_classe:=pred.testing]
+write.csv(testing, 'quiz_result.csv')
+```
 
 
