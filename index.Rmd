@@ -1,0 +1,114 @@
+---
+title: "Prediction Assignment"
+author: "Daniel Lee"
+date: "10/16/2016"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = T)
+```
+
+## Introduction
+In this project, we will using data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Our objective is to use these data to predict the actions that they are performing.
+
+The training data for this project are available [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+)
+
+More information of the data is available from the website [here](http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+---
+
+## System Pre-requisite
+
+1. The training data and testing data are stored in the RStudio current working director.
+
+2. The packages in the below code chunk are required to produce this prediction model.
+
+```{r 'load library', include=TRUE}
+require(data.table);require(dplyr);require(caret);require(gbm);require(ggplot2);require(corrplot);require(knitr);require(rmarkdown);require(randomForest)
+```
+
+
+## Data Cleaning and Exploratory
+
+Lets perform some data exploration (training set) prior to any substantial model building activity. 
+
+After some preliminary study on the variables, we notice that there are some variables that should be excluded from the training set. We have excluded variables that represent the **statistics derived from other variables** and **related to time**.
+
+```{r 'data exploratory'}
+# load the training set into data table
+dataset <- fread('pml-training.csv', sep= ',', row)
+testingQuiz <- fread('pml-testing.csv', sep=',')
+
+print('The dimension of training set:')
+dim(dataset)
+
+# remove variable V1 as its just the row number
+dataset[, V1:=NULL]
+
+# remove the statistics variables as there are derived from other variables within a specific time window
+pattern = '(avg|var|kurtosis|skew|max|min|amplitude)'
+statVar <- grep(pattern, colnames(dataset),ignore.case = T, value = T)
+dataset[, (statVar):=NULL]
+
+# remove the timestamp and window variables
+pattern <- '(timestamp|window)'
+timeVar <- grep(pattern, colnames(dataset), ignore.case = T, value = T)
+dataset[, (timeVar):=NULL]
+
+# change the target label to factor variable
+dataset[, classe:=factor(classe)]
+
+
+# print out the selected variable and its corresponding class
+str(dataset)
+
+# Correlation plot
+corMatrix <- cor(dplyr::select(dataset, -classe, -user_name))
+corrplot(corMatrix, add =F, diag = F, tl.cex = .5, tl.col = 'black', title = 'Correlation Plot')
+
+# target label
+
+targetTable <- table(dataset[, classe]) %>% prop.table() %>% data.table
+setnames(targetTable, c('V1','N'),c('Class', 'Proportion'))
+targetTable
+
+kable(targetTable, caption = 'Proportion of Label Class in Training Set')
+```
+
+After removing those unnecessary variables, the retained variables are all related to human motion in different axis. From the correlation plot above, we observe that some of these body motion variables do exhibit significant correlation on each other. As multi-colinearity is not a big issue to the model that we will use, we shall not investigate further.
+
+## Model Building
+
+### Data Splitting
+
+We are ready to build the prediction model with dataset that we have cleaned **(52 predictors + 1 target label)**. The dataset will be splitted into **training sets and validation sets** with the proportion of **60% and 40%**. Note that the training set will be further partitioned into training and validation during parameter tuning which is transparent to us.
+
+```{r 'model building', eval=F}
+# split the data into training and validation set
+set.seed(123)
+intrain <- createDataPartition(dataset$classe, p = .6, list = F)
+training <- dataset[intrain,]
+validation <- dataset[-intrain,]
+
+# set up the train control and build the model
+set.seed(124)
+trcontrol <- trainControl(method = 'cv', number = '5')
+fit.rf <- train(x = dplyr::select(training, -user_name, -classe), y = training$classe, method = 'rf', trControl = trcontrol, importance = T, na.action = na.pass)
+
+# generate prediction on validation set and its confusion matrix
+pred.validation <- predict(fit.rf, validation, na.action = na.pass)
+
+confusionMatrix(pred.validation, validation$classe)
+```
+
+
+
